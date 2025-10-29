@@ -1,0 +1,30 @@
+################################################################################
+# FlashMRM Project - Streamlit Web App Dependencies
+# -------------------------------------------------
+# This file lists all Python packages required to run the FlashMRM Streamlit app.
+# Once you push this file to your GitHub repo, Streamlit Cloud will automatically
+# install all listed dependencies during deployment.
+################################################################################
+
+# 🧠 Core libraries
+streamlit>=1.30       # Streamlit app framework
+pandas>=2.0           # DataFrame handling
+numpy>=1.25           # Numerical computations
+
+# 📊 Visualization
+altair>=5.0           # Charts for Streamlit
+
+# 🧪 Mass spectrometry and data processing
+pyteomics>=4.7        # LC-MS / MS/MS data parsing
+
+# ⚙️ Utility tools
+tqdm>=4.66            # Progress bar for loops
+python-dateutil>=2.8  # Date and time utilities
+requests>=2.31        # HTTP requests (if needed)
+
+################################################################################
+# Optional: If you plan to add more visualization or Excel export features later,
+# you can also include:
+# openpyxl>=3.1       # Excel file support
+# matplotlib>=3.9     # Plotting (if used)
+################################################################################
