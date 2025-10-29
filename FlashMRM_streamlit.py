@@ -428,9 +428,8 @@ if calculate_clicked:
     if st.session_state.uploaded_data is None:
         st.error("请先使用 Upload 按钮上传数据！")
     else:
-        import threading
-        thread = threading.Thread(target=run_flashmrm_calculation)
-        thread.start()
+        # 直接调用，不要用多线程
+        run_flashmrm_calculation()
 
 # 如果计算完成，显示结果
 if st.session_state.calculation_complete:
@@ -455,3 +454,4 @@ if st.session_state.calculation_complete:
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
