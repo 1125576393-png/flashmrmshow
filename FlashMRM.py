@@ -131,7 +131,7 @@ class DataLoader:
         try:
             # Read file in chunks
             for chunk in tqdm(
-                pd.read_csv(file_path, chunksize=self.config.CHUNK_SIZE, encoding='utf-8'), 
+                pd.read_csv(file_path, chunksize=self.config.CHUNK_SIZE, encoding='utf-8-sig'), 
                 desc=f"Reading {desc}"
             ):
                 chunks.append(chunk)
@@ -993,4 +993,5 @@ def main():
         raise
 
 if __name__ == "__main__":
+
     main()
