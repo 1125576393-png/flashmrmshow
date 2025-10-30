@@ -175,51 +175,6 @@ def run_flashmrm_calculation():
         else:
             config.INTF_TQDB_PATH = 'INTF-TQDB(from QE).csv'
             config.USE_NIST_METHOD = False
-
-  # === 新增：详细的文件验证 ===
-        required_files = {
-            'demo_data.csv': 'Demo Data',
-            'Pesudo-TQDB.csv': 'Pseudo TQDB', 
-            config.INTF_TQDB_PATH: 'Interference Database'
-        }
-        
-        missing_files = []
-        empty_files = []
-        
-        for file_path, file_desc in required_files.items():
-            if not os.path.exists(file_path):
-                missing_files.append(f"{file_desc} ({file_path})")
-            elif os.path.getsize(file_path) == 0:
-                empty_files.append(f"{file_desc} ({file_path})")
-            else:
-                # 检查文件内容
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        first_line = f.readline().strip()
-                        if not first_line:
-                            empty_files.append(f"{file_desc} ({file_path}) - 文件无内容")
-                except:
-                    try:
-                        with open(file_path, 'r', encoding='gbk') as f:
-                            first_line = f.readline().strip()
-                            if not first_line:
-                                empty_files.append(f"{file_desc} ({file_path}) - 文件无内容")
-                    except Exception as e:
-                        empty_files.append(f"{file_desc} ({file_path}) - 读取失败: {str(e)}")
-        
-        # 显示错误信息
-        if missing_files:
-            st.error(f"❌ 缺少必需文件:\n" + "\n".join(f"• {f}" for f in missing_files))
-            st.session_state.calculation_in_progress = False
-            return
-            
-        if empty_files:
-            st.error(f"❌ 以下文件为空或无法读取:\n" + "\n".join(f"• {f}" for f in empty_files))
-            st.session_state.calculation_in_progress = False
-            return
-
-        # 显示文件检查通过
-        st.success("✅ 所有必需文件检查通过！")
         
         # 输入模式判断
         if st.session_state.input_mode == "Input InChIKey":
@@ -234,30 +189,88 @@ def run_flashmrm_calculation():
         # 加载数据
         optimizer.load_all_data()
 
-        # 计算过程：每处理一个化合物更新进度条
-        inchikeys = optimizer.matched_df["InChIKey"].unique()
-        total = len(inchikeys)
-        results = []
-
-        for i, inchikey in enumerate(inchikeys[:config.MAX_COMPOUNDS]):
-            if config.SINGLE_COMPOUND_MODE:
-                inchikey = config.TARGET_INCHIKEY
+        # 计算过程：根据模式调整进度条逻辑
+        if config.SINGLE_COMPOUND_MODE:
+            # 单化合物模式：直接处理一个化合物
+            inchikey = config.TARGET_INCHIKEY
+            
+            # 检查化合物是否存在
+            if not optimizer.check_inchikey_exists(inchikey):
+                # 化合物不存在，立即完成进度
+                st.session_state.progress_value = 100
+                st.session_state.calculation_complete = True
+                st.session_state.calculation_in_progress = False
+                
+                # 创建未找到的结果
+                not_found_result = {
+                    'chemical': 'not found',
+                    'Precursor_mz': 0,
+                    'InChIKey': inchikey,
+                    'RT': 0,
+                    'coverage_all': 0,
+                    'coverage_low': 0,
+                    'coverage_medium': 0,
+                    'coverage_high': 0,
+                    'MSMS1': 0,
+                    'MSMS2': 0,
+                    'CE_QQQ1': 0,
+                    'CE_QQQ2': 0,
+                    'best5_combinations': "not found",
+                    'max_score': 0,
+                    'max_sensitivity_score': 0,
+                    'max_specificity_score': 0,
+                }
+                st.session_state.result_df = pd.DataFrame([not_found_result])
+                return
+            
+            # 化合物存在，正常处理
             result = optimizer.process_compound_nist(inchikey)
+            st.session_state.progress_value = 100
+            time.sleep(0.5)  # 稍作延迟以显示进度条
+            
             if result:
-                results.append(result)
-            progress = int((i + 1) / total * 100)
-            st.session_state.progress_value = progress
-            time.sleep(0.1)  # 稍作延迟以显示进度条
-            if config.SINGLE_COMPOUND_MODE:
-                break
-
-        # 保存结果
-        if results:
-            df = pd.DataFrame(results)
-            df.to_csv(config.OUTPUT_PATH, index=False, encoding='utf-8')
-            st.session_state.result_df = df
+                st.session_state.result_df = pd.DataFrame([result])
+            else:
+                # 处理失败的情况
+                failed_result = {
+                    'chemical': 'processing failed',
+                    'Precursor_mz': 0,
+                    'InChIKey': inchikey,
+                    'RT': 0,
+                    'coverage_all': 0,
+                    'coverage_low': 0,
+                    'coverage_medium': 0,
+                    'coverage_high': 0,
+                    'MSMS1': 0,
+                    'MSMS2': 0,
+                    'CE_QQQ1': 0,
+                    'CE_QQQ2': 0,
+                    'best5_combinations': "processing failed",
+                    'max_score': 0,
+                    'max_sensitivity_score': 0,
+                    'max_specificity_score': 0,
+                }
+                st.session_state.result_df = pd.DataFrame([failed_result])
+                
         else:
-            st.session_state.result_df = pd.DataFrame()
+            # 批量模式：使用原有的进度条逻辑
+            inchikeys = optimizer.matched_df["InChIKey"].unique()
+            total = len(inchikeys)
+            results = []
+
+            for i, inchikey in enumerate(inchikeys[:config.MAX_COMPOUNDS]):
+                result = optimizer.process_compound_nist(inchikey)
+                if result:
+                    results.append(result)
+                progress = int((i + 1) / total * 100)
+                st.session_state.progress_value = progress
+                time.sleep(0.1)  # 稍作延迟以显示进度条
+
+            # 保存结果
+            if results:
+                st.session_state.result_df = pd.DataFrame(results)
+            else:
+                st.session_state.result_df = pd.DataFrame()
 
         st.session_state.progress_value = 100
         st.session_state.calculation_complete = True
@@ -267,7 +280,6 @@ def run_flashmrm_calculation():
         st.session_state.calculation_in_progress = False
         st.session_state.calculation_complete = False
         st.session_state.upload_status = ("error", f"运行错误: {e}")
-
 
 # 主标题和Help按钮
 col_title, col_help = st.columns([3, 1])
@@ -510,6 +522,7 @@ if st.session_state.calculation_complete:
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
 
 
 
