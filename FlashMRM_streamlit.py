@@ -167,15 +167,15 @@ def run_flashmrm_calculation():
         config.MAX_COMPOUNDS = 5  # 可按需调整
         config.OUTPUT_PATH = "flashmrm_output.csv"
 
-        # 新增：设置 Interference Database 路径
+        # 选择干扰数据库
         intf_data_selection = st.session_state.get("intf_data", "Default")
-        if intf_data_selection == "Default" :
+        if intf_data_selection == "Default":
             config.INTF_TQDB_PATH = 'INTF-TQDB(from NIST).csv'
             config.USE_NIST_METHOD = True
         else:
             config.INTF_TQDB_PATH = 'INTF-TQDB(from QE).csv'
             config.USE_NIST_METHOD = False
-        
+
         # 输入模式判断
         if st.session_state.input_mode == "Input InChIKey":
             config.SINGLE_COMPOUND_MODE = True
@@ -189,19 +189,42 @@ def run_flashmrm_calculation():
         # 加载数据
         optimizer.load_all_data()
 
-        # 计算过程：根据模式调整进度条逻辑
+        # === 防止空数据死循环 ===
+        if getattr(optimizer, "matched_df", None) is None or optimizer.matched_df.empty:
+            st.session_state.progress_value = 100
+            st.session_state.calculation_complete = True
+            st.session_state.calculation_in_progress = False
+
+            st.session_state.result_df = pd.DataFrame([{
+                'chemical': 'not found',
+                'Precursor_mz': 0,
+                'InChIKey': config.TARGET_INCHIKEY if config.SINGLE_COMPOUND_MODE else "N/A",
+                'RT': 0,
+                'coverage_all': 0,
+                'coverage_low': 0,
+                'coverage_medium': 0,
+                'coverage_high': 0,
+                'MSMS1': 0,
+                'MSMS2': 0,
+                'CE_QQQ1': 0,
+                'CE_QQQ2': 0,
+                'best5_combinations': "not found",
+                'max_score': 0,
+                'max_sensitivity_score': 0,
+                'max_specificity_score': 0,
+            }])
+
+            st.session_state.upload_status = ("error", "❌ 未在数据库中找到匹配数据。")
+            return
+
+        # === 单个化合物模式 ===
         if config.SINGLE_COMPOUND_MODE:
-            # 单化合物模式：直接处理一个化合物
             inchikey = config.TARGET_INCHIKEY
-            
-            # 检查化合物是否存在
             if not optimizer.check_inchikey_exists(inchikey):
-                # 化合物不存在，立即完成进度
                 st.session_state.progress_value = 100
                 st.session_state.calculation_complete = True
                 st.session_state.calculation_in_progress = False
-                
-                # 创建未找到的结果
+
                 not_found_result = {
                     'chemical': 'not found',
                     'Precursor_mz': 0,
@@ -221,17 +244,18 @@ def run_flashmrm_calculation():
                     'max_specificity_score': 0,
                 }
                 st.session_state.result_df = pd.DataFrame([not_found_result])
+                st.session_state.upload_status = ("error", f"未找到化合物：{inchikey}")
                 return
-            
-            # 化合物存在，正常处理
+
+            # 处理并输出结果
             result = optimizer.process_compound_nist(inchikey)
             st.session_state.progress_value = 100
-            time.sleep(0.5)  # 稍作延迟以显示进度条
-            
+            time.sleep(0.5)
+
             if result:
                 st.session_state.result_df = pd.DataFrame([result])
+                st.session_state.upload_status = ("success", f"✅ 成功处理 {inchikey}")
             else:
-                # 处理失败的情况
                 failed_result = {
                     'chemical': 'processing failed',
                     'Precursor_mz': 0,
@@ -251,27 +275,33 @@ def run_flashmrm_calculation():
                     'max_specificity_score': 0,
                 }
                 st.session_state.result_df = pd.DataFrame([failed_result])
-                
+                st.session_state.upload_status = ("error", f"❌ {inchikey} 处理失败。")
+
+        # === 批量模式 ===
         else:
-            # 批量模式：使用原有的进度条逻辑
             inchikeys = optimizer.matched_df["InChIKey"].unique()
             total = len(inchikeys)
-            results = []
+            if total == 0:
+                st.session_state.result_df = pd.DataFrame()
+                st.session_state.progress_value = 100
+                st.session_state.calculation_complete = True
+                st.session_state.calculation_in_progress = False
+                st.session_state.upload_status = ("error", "未找到任何匹配化合物。")
+                return
 
+            results = []
             for i, inchikey in enumerate(inchikeys[:config.MAX_COMPOUNDS]):
                 result = optimizer.process_compound_nist(inchikey)
                 if result:
                     results.append(result)
                 progress = int((i + 1) / total * 100)
                 st.session_state.progress_value = progress
-                time.sleep(0.1)  # 稍作延迟以显示进度条
+                time.sleep(0.1)
 
-            # 保存结果
-            if results:
-                st.session_state.result_df = pd.DataFrame(results)
-            else:
-                st.session_state.result_df = pd.DataFrame()
+            st.session_state.result_df = pd.DataFrame(results) if results else pd.DataFrame()
+            st.session_state.upload_status = ("success", f"✅ 批量处理完成，共 {len(results)} 条结果。")
 
+        # === 最终状态更新 ===
         st.session_state.progress_value = 100
         st.session_state.calculation_complete = True
         st.session_state.calculation_in_progress = False
@@ -522,6 +552,7 @@ if st.session_state.calculation_complete:
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
 
 
 
