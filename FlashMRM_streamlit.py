@@ -174,7 +174,52 @@ def run_flashmrm_calculation():
         else:
             config.INTF_TQDB_PATH = 'INTF-TQDB(from QE).csv'
             config.USE_NIST_METHOD = False
+
+  # === 新增：详细的文件验证 ===
+        required_files = {
+            'demo_data.csv': 'Demo Data',
+            'Pesudo-TQDB.csv': 'Pseudo TQDB', 
+            config.INTF_TQDB_PATH: 'Interference Database'
+        }
+        
+        missing_files = []
+        empty_files = []
+        
+        for file_path, file_desc in required_files.items():
+            if not os.path.exists(file_path):
+                missing_files.append(f"{file_desc} ({file_path})")
+            elif os.path.getsize(file_path) == 0:
+                empty_files.append(f"{file_desc} ({file_path})")
+            else:
+                # 检查文件内容
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        first_line = f.readline().strip()
+                        if not first_line:
+                            empty_files.append(f"{file_desc} ({file_path}) - 文件无内容")
+                except:
+                    try:
+                        with open(file_path, 'r', encoding='gbk') as f:
+                            first_line = f.readline().strip()
+                            if not first_line:
+                                empty_files.append(f"{file_desc} ({file_path}) - 文件无内容")
+                    except Exception as e:
+                        empty_files.append(f"{file_desc} ({file_path}) - 读取失败: {str(e)}")
+        
+        # 显示错误信息
+        if missing_files:
+            st.error(f"❌ 缺少必需文件:\n" + "\n".join(f"• {f}" for f in missing_files))
+            st.session_state.calculation_in_progress = False
+            return
             
+        if empty_files:
+            st.error(f"❌ 以下文件为空或无法读取:\n" + "\n".join(f"• {f}" for f in empty_files))
+            st.session_state.calculation_in_progress = False
+            return
+
+        # 显示文件检查通过
+        st.success("✅ 所有必需文件检查通过！")
+        
         # 输入模式判断
         if st.session_state.input_mode == "Input InChIKey":
             config.SINGLE_COMPOUND_MODE = True
@@ -319,7 +364,8 @@ with st.container():
         intf_data = st.selectbox(
             "Select INTF data:",
             ["Default", "QE"],
-            index=0
+            index=0,
+            key="intf_data"
         )
 
     with col2:
@@ -463,5 +509,6 @@ if st.session_state.calculation_complete:
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
 
 
