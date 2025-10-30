@@ -150,6 +150,9 @@ def process_uploaded_data():
     except Exception as e:
         st.session_state.upload_status = ("error", f"上传处理失败: {str(e)}")
         return False
+        
+st.write("当前工作目录:", os.getcwd())
+st.write("文件列表:", os.listdir())
 
 def run_flashmrm_calculation():
     """运行 FlashMRM.py 的真实后端计算"""
@@ -509,6 +512,7 @@ if st.session_state.calculation_complete:
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
 
 
 
