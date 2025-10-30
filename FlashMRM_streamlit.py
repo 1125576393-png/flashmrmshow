@@ -530,13 +530,14 @@ if calculate_clicked:
         run_flashmrm_calculation()
 
 # 如果计算完成，显示结果
-if st.session_state.calculation_complete:
+if st.session_state.get("calculation_complete", False):
     st.markdown('<div class="section-header">计算结果</div>', unsafe_allow_html=True)
 
     if "result_df" in st.session_state and not st.session_state.result_df.empty:
-        df = st.session_state.result_df
+        df = st.session_state.result_df.copy()
         st.dataframe(df, use_container_width=True)
 
+        # 创建下载文件
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 下载结果 CSV",
@@ -545,13 +546,24 @@ if st.session_state.calculation_complete:
             mime="text/csv",
             use_container_width=True
         )
-        st.success("计算完成 ✅")
+        st.success("✅ 计算完成，结果已生成。")
     else:
-        st.warning("未生成任何有效结果，请检查输入数据或参数。")
+        st.warning("⚠️ 未生成任何有效结果，请检查输入或参数。")
+
+    # 防止页面不刷新（强制 rerun 一次）
+    st.button("🔁 重新开始", on_click=lambda: st.session_state.update({
+        "uploaded_data": None,
+        "upload_status": None,
+        "calculation_complete": False,
+        "calculation_in_progress": False,
+        "progress_value": 0
+    }))
+
 
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
 
 
 
