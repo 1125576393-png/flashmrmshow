@@ -533,7 +533,7 @@ if calculate_clicked:
 if st.session_state.get("calculation_complete", False):
     st.markdown('<div class="section-header">计算结果</div>', unsafe_allow_html=True)
 
-    if "result_df" in st.session_state and not st.session_state.result_df.empty:
+    if "result_df" in st.session_state:
         df = st.session_state.result_df.copy()
         st.dataframe(df, use_container_width=True)
 
@@ -563,11 +563,4 @@ if st.session_state.get("calculation_complete", False):
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
-
-
-
-
-
-
-
 
