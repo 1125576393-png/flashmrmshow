@@ -166,6 +166,15 @@ def run_flashmrm_calculation():
         config.MAX_COMPOUNDS = 5  # 可按需调整
         config.OUTPUT_PATH = "flashmrm_output.csv"
 
+        # 新增：设置 Interference Database 路径
+        intf_data_selection = st.session_state.get("intf_data", "Default")
+        if intf_data_selection == "Default" :
+            config.INTF_TQDB_PATH = 'INTF-TQDB(from NIST).csv'
+            config.USE_NIST_METHOD = True
+        else:
+            config.INTF_TQDB_PATH = 'INTF-TQDB(from QE).csv'
+            config.USE_NIST_METHOD = False
+            
         # 输入模式判断
         if st.session_state.input_mode == "Input InChIKey":
             config.SINGLE_COMPOUND_MODE = True
@@ -309,7 +318,7 @@ with st.container():
         # 选择INTF数据
         intf_data = st.selectbox(
             "Select INTF data:",
-            ["Default", "Option 1", "Option 2", "Option 3"],
+            ["Default", "QE"],
             index=0
         )
 
@@ -454,4 +463,5 @@ if st.session_state.calculation_complete:
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
 
