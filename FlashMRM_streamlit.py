@@ -217,94 +217,84 @@ def run_flashmrm_calculation():
             st.session_state.upload_status = ("error", "❌ 未在数据库中找到匹配数据。")
             return
 
-        # === 单个化合物模式 ===
-        if config.SINGLE_COMPOUND_MODE:
-            inchikey = config.TARGET_INCHIKEY
-            if not optimizer.check_inchikey_exists(inchikey):
-                st.session_state.progress_value = 100
-                st.session_state.calculation_complete = True
-                st.session_state.calculation_in_progress = False
-
-                not_found_result = {
-                    'chemical': 'not found',
-                    'Precursor_mz': 0,
-                    'InChIKey': inchikey,
-                    'RT': 0,
-                    'coverage_all': 0,
-                    'coverage_low': 0,
-                    'coverage_medium': 0,
-                    'coverage_high': 0,
-                    'MSMS1': 0,
-                    'MSMS2': 0,
-                    'CE_QQQ1': 0,
-                    'CE_QQQ2': 0,
-                    'best5_combinations': "not found",
-                    'max_score': 0,
-                    'max_sensitivity_score': 0,
-                    'max_specificity_score': 0,
-                }
-                st.session_state.result_df = pd.DataFrame([not_found_result])
-                st.session_state.upload_status = ("error", f"未找到化合物：{inchikey}")
-                return
-
-            # 处理并输出结果
-            result = optimizer.process_compound_nist(inchikey)
-            st.session_state.progress_value = 100
-            time.sleep(0.5)
-
-            if result:
-                st.session_state.result_df = pd.DataFrame([result])
-                st.session_state.upload_status = ("success", f"✅ 成功处理 {inchikey}")
-            else:
-                failed_result = {
-                    'chemical': 'processing failed',
-                    'Precursor_mz': 0,
-                    'InChIKey': inchikey,
-                    'RT': 0,
-                    'coverage_all': 0,
-                    'coverage_low': 0,
-                    'coverage_medium': 0,
-                    'coverage_high': 0,
-                    'MSMS1': 0,
-                    'MSMS2': 0,
-                    'CE_QQQ1': 0,
-                    'CE_QQQ2': 0,
-                    'best5_combinations': "processing failed",
-                    'max_score': 0,
-                    'max_sensitivity_score': 0,
-                    'max_specificity_score': 0,
-                }
-                st.session_state.result_df = pd.DataFrame([failed_result])
-                st.session_state.upload_status = ("error", f"❌ {inchikey} 处理失败。")
-
-        # === 批量模式 ===
+#单化合物
+       if config.SINGLE_COMPOUND_MODE:
+        inchikey = config.TARGET_INCHIKEY
+        if not optimizer.check_inchikey_exists(inchikey):
+            # 化合物不存在时，生成明确的"未找到"结果
+            not_found_result = {
+                'chemical': 'not found',
+                'Precursor_mz': 0,
+                'InChIKey': inchikey,
+                'RT': 0,
+                'coverage_all': 0,
+                'coverage_low': 0,
+                'coverage_medium': 0,
+                'coverage_high': 0,
+                'MSMS1': 0,
+                'MSMS2': 0,
+                'CE_QQQ1': 0,
+                'CE_QQQ2': 0,
+                'best5_combinations': "not found",
+                'max_score': 0,
+                'max_sensitivity_score': 0,
+                'max_specificity_score': 0,
+            }
+            st.session_state.result_df = pd.DataFrame([not_found_result])
         else:
-            inchikeys = optimizer.matched_df["InChIKey"].unique()
-            total = len(inchikeys)
-            if total == 0:
-                st.session_state.result_df = pd.DataFrame()
-                st.session_state.progress_value = 100
-                st.session_state.calculation_complete = True
-                st.session_state.calculation_in_progress = False
-                st.session_state.upload_status = ("error", "未找到任何匹配化合物。")
-                return
-
-            results = []
-            for i, inchikey in enumerate(inchikeys[:config.MAX_COMPOUNDS]):
+            # 处理存在的化合物
+            if config.USE_NIST_METHOD:
                 result = optimizer.process_compound_nist(inchikey)
-                if result:
-                    results.append(result)
-                progress = int((i + 1) / total * 100)
-                st.session_state.progress_value = progress
-                time.sleep(0.1)
-
-            st.session_state.result_df = pd.DataFrame(results) if results else pd.DataFrame()
-            st.session_state.upload_status = ("success", f"✅ 批量处理完成，共 {len(results)} 条结果。")
-
-        # === 最终状态更新 ===
+            else:
+                result = optimizer.process_compound_qe(inchikey)
+            st.session_state.result_df = pd.DataFrame([result] if result else [])
+        
+        # 强制更新状态
         st.session_state.progress_value = 100
         st.session_state.calculation_complete = True
         st.session_state.calculation_in_progress = False
+
+       else:
+        # 批量模式：处理多个化合物
+        # 获取需要处理的InChIKey列表（优先使用上传文件中的数据）
+        if st.session_state.uploaded_data["type"] == "batch_file":
+            # 从上传的文件中提取InChIKey
+            uploaded_inchikeys = st.session_state.uploaded_data["data"]["InChIKey"].dropna().unique()
+            # 筛选出在匹配数据中存在的InChIKey
+            valid_inchikeys = [ik for ik in uploaded_inchikeys if optimizer.check_inchikey_exists(ik)]
+            total = len(valid_inchikeys)
+            if total == 0:
+                st.warning("上传的文件中没有找到匹配的InChIKey")
+        else:
+            # 若未上传文件，使用默认的匹配数据
+            valid_inchikeys = optimizer.matched_df["InChIKey"].unique()
+            total = len(valid_inchikeys)
+
+        results = []
+        for i, inchikey in enumerate(valid_inchikeys[:config.MAX_COMPOUNDS]):
+            try:
+                # 根据方法选择处理函数
+                if config.USE_NIST_METHOD:
+                    result = optimizer.process_compound_nist(inchikey)
+                else:
+                    result = optimizer.process_compound_qe(inchikey)
+                if result:
+                    results.append(result)
+            except Exception as e:
+                st.error(f"处理 {inchikey} 时出错: {str(e)}")
+            
+            # 更新进度条
+            progress = int((i + 1) / total * 100)
+            st.session_state.progress_value = progress
+            time.sleep(0.1)
+
+        # 确保结果始终被存入session_state（即使为空）
+        st.session_state.result_df = pd.DataFrame(results)
+
+    # 计算完成后强制刷新状态
+    st.session_state.progress_value = 100
+    st.session_state.calculation_complete = True
+    st.session_state.calculation_in_progress = False
 
     except Exception as e:
         st.session_state.calculation_in_progress = False
@@ -529,38 +519,41 @@ if calculate_clicked:
         # 直接调用，不要用多线程
         run_flashmrm_calculation()
 
-# 如果计算完成，显示结果
-if st.session_state.get("calculation_complete", False):
-    st.markdown('<div class="section-header">计算结果</div>', unsafe_allow_html=True)
-
-    if "result_df" in st.session_state:
-        df = st.session_state.result_df.copy()
-        st.dataframe(df, use_container_width=True)
-
-        # 创建下载文件
-        csv = df.to_csv(index=False).encode('utf-8')
+# 在计算按钮之后添加结果展示区域
+if st.session_state.calculation_complete:
+    st.subheader("计算结果")
+    if "result_df" in st.session_state and not st.session_state.result_df.empty:
+        # 显示结果表格
+        st.dataframe(st.session_state.result_df)
+        # 提供CSV下载
+        csv = st.session_state.result_df.to_csv(index=False, encoding='utf-8')
         st.download_button(
-            label="📥 下载结果 CSV",
+            label="下载结果 (CSV)",
             data=csv,
-            file_name="FlashMRM_results.csv",
+            file_name="flashmrm_results.csv",
             mime="text/csv",
-            use_container_width=True
         )
-        st.success("✅ 计算完成，结果已生成。")
     else:
-        st.warning("⚠️ 未生成任何有效结果，请检查输入或参数。")
-
-    # 防止页面不刷新（强制 rerun 一次）
-    st.button("🔁 重新开始", on_click=lambda: st.session_state.update({
-        "uploaded_data": None,
-        "upload_status": None,
-        "calculation_complete": False,
-        "calculation_in_progress": False,
-        "progress_value": 0
-    }))
+        # 结果为空时显示提示并允许下载空文件
+        st.info("未找到匹配的结果或计算失败")
+        # 生成空结果CSV（保留表头）
+        empty_df = pd.DataFrame(columns=[
+            'chemical', 'Precursor_mz', 'InChIKey', 'RT',
+            'coverage_all', 'coverage_low', 'coverage_medium', 'coverage_high',
+            'MSMS1', 'MSMS2', 'CE_QQQ1', 'CE_QQQ2',
+            'best5_combinations', 'max_score', 'max_sensitivity_score', 'max_specificity_score'
+        ])
+        csv = empty_df.to_csv(index=False, encoding='utf-8')
+        st.download_button(
+            label="下载空结果 (CSV)",
+            data=csv,
+            file_name="flashmrm_results.csv",
+            mime="text/csv",
+        )
 
 
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
 
