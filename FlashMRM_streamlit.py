@@ -372,7 +372,7 @@ with st.container():
     # 第一行参数
     col1, col2, col3 = st.columns([2, 2, 1])
     
-     with col1:
+    with col1:
         # 选择INTF数据
         intf_data = st.selectbox(
             "Select INTF data:",
@@ -522,3 +522,4 @@ if st.session_state.calculation_complete:
 # 页脚信息
 st.sidebar.markdown("---")
 st.sidebar.markdown("**FlashMRM** - 质谱数据分析工具")
+
