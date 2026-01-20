@@ -24,14 +24,14 @@ logger = logging.getLogger(__name__)
 class Config:
     """Configuration class to centralize all parameters"""
     # Data file paths
-    DEMO_DATA_PATH: str = 'demo_data.csv'
+    DEMO_DATA_PATH: str = '375pesticides_inchikey.csv'
     PESUDO_TQDB_PATH: str = 'Pesudo-TQDB'  # Folder path
-    INTF_TQDB_PATH: str = 'INTF_TQDB_NIST'  # Folder path, default to NIST data
+    INTF_TQDB_PATH: str = 'INTF_TQDB_EXPOS'  # Folder path, default to EXPOS data
     OUTPUT_PATH: str = 'optimization_results.csv'
     
     # Processing parameters
     CHUNK_SIZE: int = 100000
-    MAX_COMPOUNDS: int = 5  # Process all compounds, None means process all
+    MAX_COMPOUNDS: int = 375  # Process all compounds, None means process all
     MZ_TOLERANCE: float = 0.7
     RT_TOLERANCE: float = 2.0  # 2 minutes tolerance (RT converted to minutes)
     MSMS_TOLERANCE: float = 0.7
@@ -45,15 +45,16 @@ class Config:
     SAVE_INTERVAL: int = 100  # Save intermediate results after processing this many compounds
     
     # Scoring parameters
-    SENSITIVITY_WEIGHT: float = 0.8
-    SPECIFICITY_WEIGHT: float = 0.2
+    SENSITIVITY_WEIGHT: float = 0.0
+    SPECIFICITY_WEIGHT: float = 1.0
+    TOP_COMBINATIONS: int = 10  # Number of top combinations to return (applies to both EXPER and EXPOS methods)
     
     # QQQ conversion parameters
     CE_SLOPE: float = 0.5788
     CE_INTERCEPT: float = 9.4452
     
     # Interference calculation method selection
-    USE_NIST_METHOD: bool = True  # True uses NIST method, False uses QE method
+    USE_EXPOS_METHOD: bool = True  # True uses EXPOS method, False uses EXPER method
     
     # Input mode selection
     SINGLE_COMPOUND_MODE: bool = False  # True for single compound input mode
@@ -347,7 +348,7 @@ class LazyFileLoader:
         all_data = []
         
         # Process files in smaller batches to control memory
-        batch_size = 5  # Process 5 files at a time
+        batch_size = 375  # Process 5 files at a time
         for i in range(0, len(csv_files), batch_size):
             batch_files = csv_files[i:i+batch_size]
             batch_data = []
@@ -392,8 +393,8 @@ class LazyFileLoader:
         return pd.DataFrame()
 
 
-class InterferenceCalculatorQE:
-    """Interference calculator for QE method"""
+class InterferenceCalculatorEXPER:
+    """Interference calculator for EXPER method (experimentally acquired data)"""
     
     def __init__(self, config: Config):
         self.config = config
@@ -434,15 +435,15 @@ class InterferenceCalculatorQE:
             self._msms_cache[cache_key] = 0.0
             return 0.0
 
-class InterferenceCalculatorNIST:
-    """Interference calculator for NIST method"""
+class InterferenceCalculatorEXPOS:
+    """Interference calculator for EXPOS method"""
     
     def __init__(self, config: Config):
         self.config = config
     
     def process_combination(self, index, row, different_inchikey_rows_low, different_inchikey_rows_medium, 
                            different_inchikey_rows_high, coverage_low, coverage_medium, coverage_high, coverage_all):
-        """Interference calculation for NIST method"""
+        """Interference calculation for EXPOS method"""
         quan_ion = row['MSMS1']
         quan_ion_intensity = row['intensity1']
         quan_ion_nce = row['NCE1']
@@ -480,7 +481,7 @@ class InterferenceCalculatorNIST:
         result_rows2 = self.process_ce_range(different_inchikey_rows_low, different_inchikey_rows_medium, 
                                            different_inchikey_rows_high, qual_ion, qual_ion_nce)
 
-        common_inchikeys = set(result_rows1["InChIKey"]).intersection(set(result_rows2["InChIKey"]))
+        common_inchikeys = set(result_rows1["InChIKey"]).union(set(result_rows2["InChIKey"]))
         hit_num = len(common_inchikeys)
         hit_rate = 0
         if coverage != 0:
@@ -488,9 +489,36 @@ class InterferenceCalculatorNIST:
 
         return hit_num, hit_rate
 
+    def process_single_ion(self, row, different_inchikey_rows_low, different_inchikey_rows_medium, 
+                           different_inchikey_rows_high, coverage_low, coverage_medium, coverage_high, coverage_all):
+        """Interference calculation for single ion in EXPOS method"""
+        ion = row['MSMS']
+        ion_nce = row['NCE']
+        
+        # Select coverage based on NCE
+        if ion_nce <= 60.0:    
+            coverage = coverage_low
+        elif 60.0 < ion_nce <= 120.0:
+            coverage = coverage_medium
+        elif ion_nce > 120.0:
+            coverage = coverage_high
+        else:
+            coverage = 0
+        
+        # Process data for the CE range
+        result_rows = self.process_ce_range(different_inchikey_rows_low, different_inchikey_rows_medium, 
+                                           different_inchikey_rows_high, ion, ion_nce)
+        
+        hit_num = len(result_rows["InChIKey"].unique()) if len(result_rows) > 0 else 0
+        hit_rate = 0
+        if coverage != 0:
+            hit_rate = hit_num / coverage
+        
+        return hit_num, hit_rate
+    
     def process_ce_range(self, different_inchikey_rows_low, different_inchikey_rows_medium, 
                         different_inchikey_rows_high, ion, nce):
-        """CE range processing for NIST method"""
+        """CE range processing for EXPOS method"""
         if nce <= 60.0:    
             return different_inchikey_rows_low[abs(ion - different_inchikey_rows_low['MSMS']) <= 1]
         elif 60.0 < nce <= 120.0:
@@ -500,10 +528,10 @@ class InterferenceCalculatorNIST:
         else:
             return pd.DataFrame()
 
-class IonPairOptimizerQE:
-    """Ion pair optimizer for QE method"""
+class IonPairOptimizerEXPER:
+    """Ion pair optimizer for EXPER method (experimentally acquired data)"""
     
-    def __init__(self, config: Config, interference_calc: InterferenceCalculatorQE):
+    def __init__(self, config: Config, interference_calc: InterferenceCalculatorEXPER):
         self.config = config
         self.interference_calc = interference_calc
     
@@ -646,21 +674,22 @@ class IonPairOptimizerQE:
         # Get best combination
         max_row = candidate_df.loc[candidate_df["score"].idxmax()]
         
-        # Get top 5 best combinations (CE conversion will be done in MRMOptimizer)
-        max5_rows = candidate_df.nlargest(5, 'score').copy()
-        max5_rows = max5_rows.reset_index(drop=True)
+        # Get top N best combinations (CE conversion will be done in MRMOptimizer)
+        top_n = min(self.config.TOP_COMBINATIONS, len(candidate_df))
+        top_rows = candidate_df.nlargest(top_n, 'score').copy()
+        top_rows = top_rows.reset_index(drop=True)
         
-        return max_row, max5_rows
+        return max_row, top_rows
 
-class IonPairOptimizerNIST:
-    """Ion pair optimizer for NIST method"""
+class IonPairOptimizerEXPOS:
+    """Ion pair optimizer for EXPOS method"""
     
-    def __init__(self, config: Config, interference_calc: InterferenceCalculatorNIST):
+    def __init__(self, config: Config, interference_calc: InterferenceCalculatorEXPOS):
         self.config = config
         self.interference_calc = interference_calc
     
     def filter_and_rank_ions(self, working_group_inchikey: pd.DataFrame) -> pd.DataFrame:
-        """Filter and rank ions for NIST method"""
+        """Filter and rank ions for EXPOS method"""
         # Determine which name column to use
         name_col = 'Name_x' if 'Name_x' in working_group_inchikey.columns else 'Name'
         
@@ -687,20 +716,45 @@ class IonPairOptimizerNIST:
         return working_group
     
     def generate_ion_pairs(self, working_group: pd.DataFrame) -> pd.DataFrame:
-        """Generate ion pair combinations for NIST method"""
-        if len(working_group) < 2:
+        """Generate ion pair combinations for EXPOS method"""
+        if len(working_group) < 1:
             return pd.DataFrame()
         
-        # Generate ion pair combinations
-        combinations_list = list(combinations(working_group.iterrows(), 2))
+        # Sort by intensity
+        working_group_sorted = working_group.sort_values('intensity', ascending=False)
         
-        candidate_columns = ['MSMS1','intensity1', 'NCE1', 'CE1', 'MSMS2','intensity2', 'NCE2', 'CE2']
+        # Deduplicate MSMS with tolerance 0.001 da (keep the one with highest intensity)
+        msms_tolerance = 0.001
+        unique_ions = []
+        used_msms = []
+        
+        for index, row in working_group_sorted.iterrows():
+            msms = row['MSMS']
+            # Check if this MSMS is too close to any already selected MSMS
+            is_too_close = False
+            for used_msms_val in used_msms:
+                if abs(msms - used_msms_val) < msms_tolerance:
+                    is_too_close = True
+                    break
+            
+            if not is_too_close:
+                unique_ions.append(row.to_dict())
+                used_msms.append(msms)
+        
+        if len(unique_ions) < 2:
+            return pd.DataFrame()
+        
+        # Generate ion pair combinations from unique ions
+        unique_ions_df = pd.DataFrame(unique_ions).reset_index(drop=True)
+        combinations_list = list(combinations(unique_ions_df.iterrows(), 2))
+        
+        candidate_columns = ['MSMS1', 'intensity1', 'NCE1', 'CE1', 'MSMS2', 'intensity2', 'NCE2', 'CE2']
         candidate_data = []
         
         for (index1, row1), (index2, row2) in combinations_list:
-            if row1['MSMS'] != row2['MSMS'] and abs(row1['MSMS']-row2['MSMS']) >= 2.0:
+            if row1['MSMS'] != row2['MSMS'] and abs(row1['MSMS'] - row2['MSMS']) >= 2.0:
                 candidate_data.append([
-                    row1['MSMS'], row1['intensity'], row1['NCE'], row1['CE'], 
+                    row1['MSMS'], row1['intensity'], row1['NCE'], row1['CE'],
                     row2['MSMS'], row2['intensity'], row2['NCE'], row2['CE']
                 ])
         
@@ -710,8 +764,8 @@ class IonPairOptimizerNIST:
     def calculate_scores(self, candidate_df: pd.DataFrame, different_inchikey_rows_low, 
                         different_inchikey_rows_medium, different_inchikey_rows_high,
                         coverage_low, coverage_medium, coverage_high, coverage_all) -> pd.DataFrame:
-        """Calculate scores for NIST method"""
-        # Calculate interference
+        """Calculate scores for EXPOS method (ion pair mode)"""
+        # Calculate interference for each ion pair
         hit_nums = []
         hit_rates = []
         
@@ -726,34 +780,36 @@ class IonPairOptimizerNIST:
         candidate_df['hit_num'] = hit_nums
         candidate_df['hit_rate'] = hit_rates
         
-        # Calculate scores
-        if coverage_all != 0:
-            score = (candidate_df['intensity1'] + candidate_df['intensity2']) * 0.8 - 2 * candidate_df['hit_rate'] * 0.2
-        else:
-            score = (candidate_df['intensity1'] + candidate_df['intensity2']) * 0.5
+        # Calculate intensity sum (two channels combined)
+        candidate_df['intensity_sum'] = candidate_df['intensity1'] + candidate_df['intensity2']
         
-        # Calculate sensitivity and specificity scores
-        max_intensity = candidate_df['intensity1'] + candidate_df['intensity2']
-        max_intensity_sum = max_intensity.max()
-        max_hit_rate = candidate_df['hit_rate'].max()
+        # Calculate Sensitivity Score and Specificity Score
+        max_intensity_sum = candidate_df['intensity_sum'].max()
+        max_hit_num = candidate_df['hit_num'].max()
         
+        # Sensitivity Score = 当前intensity_sum / 所有组合中最大的intensity_sum
         if max_intensity_sum > 0:
-            candidate_df['sensitivity_score'] = max_intensity / max_intensity_sum
+            candidate_df['sensitivity_score'] = candidate_df['intensity_sum'] / max_intensity_sum
         else:
             candidate_df['sensitivity_score'] = 0
         
-        if max_hit_rate > 0:
-            candidate_df['specificity_score'] = -(1 + candidate_df['hit_rate']) / (1 + max_hit_rate)
+        # Specificity Score = 1 - hit_num / 所有组合中最大的hit_num, 如果最大的hit_num为0，结果为1
+        if max_hit_num > 0:
+            candidate_df['specificity_score'] = 1 - candidate_df['hit_num'] / max_hit_num
         else:
-            candidate_df['specificity_score'] = 0
+            candidate_df['specificity_score'] = 1
         
-        candidate_df['score'] = score
+        # Score = weighted combination of sensitivity_score and specificity_score
+        candidate_df['score'] = (
+            candidate_df['sensitivity_score'] * self.config.SENSITIVITY_WEIGHT +
+            candidate_df['specificity_score'] * self.config.SPECIFICITY_WEIGHT
+        )
         
         return candidate_df
     
     def select_best_pairs(self, candidate_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
-        """Select best ion pairs for NIST method"""
-        # Deduplication
+        """Select best ion pairs for EXPOS method"""
+        # Deduplication by MSMS pair
         candidate_df['MSMS_combined'] = candidate_df.apply(
             lambda row: tuple(sorted([row['MSMS1'], row['MSMS2']])), axis=1
         )
@@ -762,10 +818,11 @@ class IonPairOptimizerNIST:
         
         # Get best combination
         max_row = candidate_df.loc[candidate_df["score"].idxmax()]
-        max5_rows = candidate_df.nlargest(5, 'score')
-        max5_rows = max5_rows.reset_index(drop=True)
+        top_n = min(self.config.TOP_COMBINATIONS, len(candidate_df))
+        top_rows = candidate_df.nlargest(top_n, 'score')
+        top_rows = top_rows.reset_index(drop=True)
         
-        return max_row, max5_rows
+        return max_row, top_rows
 
 class MemoryMonitor:
     """Memory usage monitor"""
@@ -827,12 +884,12 @@ class MRMOptimizer:
         self.memory_monitor.log_snapshot("初始化完成")
         
         # Initialize different components based on method selection
-        if self.config.USE_NIST_METHOD:
-            self.interference_calc = InterferenceCalculatorNIST(self.config)
-            self.ion_optimizer = IonPairOptimizerNIST(self.config, self.interference_calc)
+        if self.config.USE_EXPOS_METHOD:
+            self.interference_calc = InterferenceCalculatorEXPOS(self.config)
+            self.ion_optimizer = IonPairOptimizerEXPOS(self.config, self.interference_calc)
         else:
-            self.interference_calc = InterferenceCalculatorQE(self.config)
-            self.ion_optimizer = IonPairOptimizerQE(self.config, self.interference_calc)
+            self.interference_calc = InterferenceCalculatorEXPER(self.config)
+            self.ion_optimizer = IonPairOptimizerEXPER(self.config, self.interference_calc)
         
         # Data storage - use lazy loading mode
         self.demo_df = None
@@ -879,14 +936,14 @@ class MRMOptimizer:
     def _save_intermediate_results(self, results: List[Dict], processed_count: int):
         """Save intermediate results"""
         if results:
-            method_suffix = "nist" if self.config.USE_NIST_METHOD else "qe"
+            method_suffix = "expos" if self.config.USE_EXPOS_METHOD else "exper"
             intermediate_path = f"MRM_optimization_intermediate_{method_suffix}_{processed_count}.csv"
             result_df = pd.DataFrame(results)
             result_df.to_csv(intermediate_path, index=False, encoding='utf-8')
             logger.info(f"Intermediate results saved to {intermediate_path}")
     
-    def process_compound_nist(self, inchikey: str) -> Optional[Dict]:
-        """Process a single compound using NIST method"""
+    def process_compound_expos(self, inchikey: str) -> Optional[Dict]:
+        """Process a single compound using EXPOS method"""
         logger.info(f"Processing InChIKey: {inchikey}")
         
         # Query data on-demand using lazy loader
@@ -931,14 +988,14 @@ class MRMOptimizer:
             logger.warning(f"  Insufficient available ions, skipping")
             return None
         
-        # Filter and rank ions using NIST optimizer
+        # Filter and rank ions using EXPOS optimizer
         working_group = self.ion_optimizer.filter_and_rank_ions(working_group_inchikey)
         
-        if len(working_group) < 2:
+        if len(working_group) < 1:
             logger.warning(f"  Insufficient ions after filtering, skipping")
             return None
         
-        # Generate ion pairs using NIST optimizer
+        # Generate ion pairs using EXPOS optimizer
         candidate_df = self.ion_optimizer.generate_ion_pairs(working_group)
         
         if len(candidate_df) < 1:
@@ -952,7 +1009,7 @@ class MRMOptimizer:
                 'coverage_medium': 0,
                 'coverage_high': 0,
                 'coverage_all': 0,
-                'best5_combinations': "no combination",
+                'best_combinations': "no combination",
                 'max_score': 0
             }
         
@@ -981,31 +1038,32 @@ class MRMOptimizer:
         
         logger.info(f"  Interference coverage - Low NCE: {coverage_low}, Medium NCE: {coverage_medium}, High NCE: {coverage_high}, Total: {coverage_all}")
         
-        # Calculate scores using NIST optimizer
+        # Calculate scores using EXPOS optimizer
         candidate_df = self.ion_optimizer.calculate_scores(
             candidate_df, different_inchikey_rows_low, different_inchikey_rows_medium, 
             different_inchikey_rows_high, coverage_low, coverage_medium, coverage_high, coverage_all
         )
         
-        # Select best pairs using NIST optimizer
-        max_row, max5_rows = self.ion_optimizer.select_best_pairs(candidate_df)
+        # Select best ion pairs using EXPOS optimizer
+        max_row, top_rows = self.ion_optimizer.select_best_pairs(candidate_df)
         
         # Calculate QQQ collision energy
-        if max_row['CE1'] and max_row['CE2']:
+        if pd.notna(max_row['CE1']) and pd.notna(max_row['CE2']):
             CE1 = self.config.CE_SLOPE * float(max_row['CE1']) + self.config.CE_INTERCEPT
             CE2 = self.config.CE_SLOPE * float(max_row['CE2']) + self.config.CE_INTERCEPT
         else:
             CE1 = 0
             CE2 = 0
         
-        # Add QQQ collision energy to max5_rows
-        max5_rows['CE_QQQ1'] = self.config.CE_SLOPE * max5_rows['CE1'] + self.config.CE_INTERCEPT
-        max5_rows['CE_QQQ2'] = self.config.CE_SLOPE * max5_rows['CE2'] + self.config.CE_INTERCEPT
+        # Add QQQ collision energy to top_rows
+        top_rows['CE_QQQ1'] = self.config.CE_SLOPE * top_rows['CE1'] + self.config.CE_INTERCEPT
+        top_rows['CE_QQQ2'] = self.config.CE_SLOPE * top_rows['CE2'] + self.config.CE_INTERCEPT
         
         logger.info(f"  Best ion pair: {max_row['MSMS1']:.1f} (CE: {CE1:.1f}) / {max_row['MSMS2']:.1f} (CE: {CE2:.1f})")
         logger.info(f"  Max score: {max_row['score']:.4f}")
         logger.info(f"  Sensitivity score: {max_row['sensitivity_score']:.4f}")
         logger.info(f"  Specificity score: {max_row['specificity_score']:.4f}")
+        logger.info(f"  Intensity sum: {max_row['intensity_sum']:.4f}")
         
         return {
             'chemical': chemical,
@@ -1020,14 +1078,15 @@ class MRMOptimizer:
             'MSMS2': max_row['MSMS2'],
             'CE_QQQ1': CE1,
             'CE_QQQ2': CE2,
-            'best5_combinations': max5_rows.to_dict('records'),
+            'best_combinations': top_rows.to_dict('records'),
             'max_score': max_row['score'],
             'max_sensitivity_score': max_row['sensitivity_score'],
             'max_specificity_score': max_row['specificity_score'],
+            'max_intensity_sum': max_row['intensity_sum'],
         }
     
-    def process_compound_qe(self, inchikey: str) -> Optional[Dict]:
-        """Process a single compound using QE method"""
+    def process_compound_exper(self, inchikey: str) -> Optional[Dict]:
+        """Process a single compound using EXPER method (experimentally acquired data)"""
         logger.info(f"Processing InChIKey: {inchikey}")
         
         # Query data on-demand using lazy loader
@@ -1088,7 +1147,7 @@ class MRMOptimizer:
         logger.info(f"  Generated {len(candidate_df)} candidate ion pairs")
         
         # Prepare interference data
-        interference_data = self.prepare_interference_data_qe(precursormz, rt)
+        interference_data = self.prepare_interference_data_exper(precursormz, rt)
         
         # Calculate coverage
         coverage = {
@@ -1106,15 +1165,15 @@ class MRMOptimizer:
         candidate_df = self.ion_optimizer.calculate_scores(candidate_df, interference_data)
         
         # Select best ion pairs
-        max_row, max5_rows = self.ion_optimizer.select_best_pairs(candidate_df)
+        max_row, top_rows = self.ion_optimizer.select_best_pairs(candidate_df)
         
         # Calculate QQQ collision energy
         CE1 = self.config.CE_SLOPE * float(max_row['CE1']) + self.config.CE_INTERCEPT
         CE2 = self.config.CE_SLOPE * float(max_row['CE2']) + self.config.CE_INTERCEPT
         
-        # Add QQQ collision energy to max5_rows
-        max5_rows['CE_QQQ1'] = self.config.CE_SLOPE * max5_rows['CE1'] + self.config.CE_INTERCEPT
-        max5_rows['CE_QQQ2'] = self.config.CE_SLOPE * max5_rows['CE2'] + self.config.CE_INTERCEPT
+        # Add QQQ collision energy to top_rows
+        top_rows['CE_QQQ1'] = self.config.CE_SLOPE * top_rows['CE1'] + self.config.CE_INTERCEPT
+        top_rows['CE_QQQ2'] = self.config.CE_SLOPE * top_rows['CE2'] + self.config.CE_INTERCEPT
         
         logger.info(f"  Best ion pair: {max_row['MSMS1']:.1f} (CE: {CE1:.1f}) / {max_row['MSMS2']:.1f} (CE: {CE2:.1f})")
         logger.info(f"  Max score: {max_row['score']:.4f}")
@@ -1132,14 +1191,14 @@ class MRMOptimizer:
             'MSMS2': max_row['MSMS2'],
             'CE_QQQ1': CE1,
             'CE_QQQ2': CE2,
-            'best5_combinations': max5_rows.to_dict('records'),
+            'best_combinations': top_rows.to_dict('records'),
             'max_score': max_row['score'],
             'max_sensitivity_score': max_row['sensitivity_score'],
             'max_specificity_score': max_row['specificity_score'],
         }
     
-    def prepare_interference_data_qe(self, precursormz: float, rt: float) -> Dict[str, pd.DataFrame]:
-        """Prepare interference data (QE method) - query on-demand"""
+    def prepare_interference_data_exper(self, precursormz: float, rt: float) -> Dict[str, pd.DataFrame]:
+        """Prepare interference data (EXPER method) - query on-demand"""
         # Query interference data on-demand
         rt_filtered_rows = self.lazy_loader.query_interference_by_range(
             self.config.INTF_TQDB_PATH, precursormz, rt,
@@ -1168,7 +1227,7 @@ class MRMOptimizer:
     
     def run_optimization(self):
         """Run optimization"""
-        method_name = "NIST" if self.config.USE_NIST_METHOD else "QE"
+        method_name = "EXPOS" if self.config.USE_EXPOS_METHOD else "EXPER"
         logger.info(f"Starting MRM transition optimization calculation (using {method_name} method)...")
         
         # Load data
@@ -1203,7 +1262,7 @@ class MRMOptimizer:
                     'MSMS2': 0,
                     'CE_QQQ1': 0,
                     'CE_QQQ2': 0,
-                    'best5_combinations': "not found",
+                    'best_combinations': "not found",
                     'max_score': 0,
                     'max_sensitivity_score': 0,
                     'max_specificity_score': 0,
@@ -1236,10 +1295,10 @@ class MRMOptimizer:
         for i, inchikey in enumerate(tqdm(compounds_to_process, desc='Processing compounds')):
             try:
                 # Select processing function based on method
-                if self.config.USE_NIST_METHOD:
-                    result = self.process_compound_nist(inchikey)
+                if self.config.USE_EXPOS_METHOD:
+                    result = self.process_compound_expos(inchikey)
                 else:
-                    result = self.process_compound_qe(inchikey)
+                    result = self.process_compound_exper(inchikey)
                 
                 if result:
                     results.append(result)
@@ -1320,10 +1379,10 @@ class MRMOptimizer:
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(description='MRM Transition Optimization Tool')
-    parser.add_argument('--intf-db', choices=['nist', 'qe'], default='nist',
-                       help='Select interference database: nist or qe (default: nist)')
-    parser.add_argument('--max-compounds', type=int, default=5,
-                       help='Maximum number of compounds to process (default: 5)')
+    parser.add_argument('--intf-db', choices=['expos', 'exper', 'exposome_explorer', 'experimental', 'nist', 'qe'], default='expos',
+                       help='Select interference database: expos (or exposome_explorer/nist) or exper (or experimental/qe) (default: expos)')
+    parser.add_argument('--max-compounds', type=int, default=375,
+                       help='Maximum number of compounds to process (default: 375)')
     parser.add_argument('--output', type=str, default='optimization_results.csv',
                        help='Output filename (default: optimization_results.csv)')
     parser.add_argument('--single-compound', action='store_true',
@@ -1336,20 +1395,22 @@ def main():
     try:
         # Create configuration
         config = Config()
-        config.USE_NIST_METHOD = (args.intf_db == 'nist')
+        # Support both old and new parameter names for backward compatibility
+        is_expos = args.intf_db in ['expos', 'exposome_explorer', 'nist']
+        config.USE_EXPOS_METHOD = is_expos
         config.MAX_COMPOUNDS = args.max_compounds
         config.OUTPUT_PATH = args.output
         config.SINGLE_COMPOUND_MODE = args.single_compound
         config.TARGET_INCHIKEY = args.inchikey
         
         # Set INTF_TQDB_PATH based on selection
-        if args.intf_db == 'nist':
-            config.INTF_TQDB_PATH = 'INTF_TQDB_NIST'
+        if is_expos:
+            config.INTF_TQDB_PATH = 'INTF_TQDB_EXPOS'
         else:
-            config.INTF_TQDB_PATH = 'INTF_TQDB_QE'
+            config.INTF_TQDB_PATH = 'INTF_TQDB_EXPER'
         
         logger.info(f"Using interference database: {config.INTF_TQDB_PATH}")
-        logger.info(f"Using method: {'NIST' if config.USE_NIST_METHOD else 'QE'}")
+        logger.info(f"Using method: {'EXPOS' if config.USE_EXPOS_METHOD else 'EXPER'}")
         
         if config.SINGLE_COMPOUND_MODE:
             if not config.TARGET_INCHIKEY:
