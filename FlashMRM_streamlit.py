@@ -2,10 +2,12 @@ import streamlit as st
 import pandas as pd
 import time
 from FlashMRM import Config, MRMOptimizer
-import st_yled
 import os
 
-st_yled.init()  # 每个页面都要先初始化
+# Note: st_yled is a custom module, using standard streamlit components instead
+# If you have st_yled module, you can uncomment the following lines:
+# import st_yled
+# st_yled.init()
 
 st.set_page_config(
     page_title="FlashMRM",
@@ -130,6 +132,8 @@ if 'show_help' not in st.session_state:
     st.session_state.show_help = False
 if 'result_df' not in st.session_state:
     st.session_state.result_df = pd.DataFrame()
+if 'top_combinations' not in st.session_state:
+    st.session_state.top_combinations = 10
 
 def process_uploaded_data():
     """处理上传的数据"""
@@ -207,16 +211,17 @@ def run_flashmrm_calculation():
         config.RT_TOLERANCE = st.session_state.get("rt_tolerance", 2.0)
         config.RT_OFFSET = st.session_state.get("rt_offset", 0.0)
         config.SPECIFICITY_WEIGHT = st.session_state.get("specificity_weight", 0.2)
+        config.TOP_COMBINATIONS = st.session_state.get("top_combinations", 10)
         config.OUTPUT_PATH = "flashmrm_output.csv"
         
         # 设置干扰数据库
-        intf_data_selection = st.session_state.get("intf_data", "NIST")
-        if intf_data_selection == "Default":
-            config.INTF_TQDB_PATH = 'INTF_TQDB_NIST'
-            config.USE_NIST_METHOD = True
+        intf_data_selection = st.session_state.get("intf_data", "EXPOS")
+        if intf_data_selection == "EXPOS":
+            config.INTF_TQDB_PATH = 'INTF_TQDB_EXPOS'
+            config.USE_EXPOS_METHOD = True
         else:
-            config.INTF_TQDB_PATH = 'INTF_TQDB_QE'
-            config.USE_NIST_METHOD = False
+            config.INTF_TQDB_PATH = 'INTF_TQDB_EXPER'
+            config.USE_EXPOS_METHOD = False
         
         # 2. 获取目标InChIKey列表
         uploaded_data = st.session_state.uploaded_data
@@ -250,7 +255,7 @@ def run_flashmrm_calculation():
                         'MSMS2': 0.0,
                         'CE_QQQ1': 0.0,
                         'CE_QQQ2': 0.0,
-                        'best5_combinations': "no matching data in database",
+                        'best_combinations': "no matching data in database",
                         'max_score': 0.0,
                         'max_sensitivity_score': 0.0,
                         'max_specificity_score': 0.0,
@@ -267,7 +272,7 @@ def run_flashmrm_calculation():
         # 4. 遍历计算所有目标InChIKey
         results = []
         total_compounds = len(target_inchikeys)
-        process_func = optimizer.process_compound_nist if config.USE_NIST_METHOD else optimizer.process_compound_qe
+        process_func = optimizer.process_compound_expos if config.USE_EXPOS_METHOD else optimizer.process_compound_exper
         
         for idx, inchikey in enumerate(target_inchikeys):
             try:
@@ -286,7 +291,7 @@ def run_flashmrm_calculation():
                         'MSMS2': 0.0,
                         'CE_QQQ1': 0.0,
                         'CE_QQQ2': 0.0,
-                        'best5_combinations': "inchikey not found",
+                        'best_combinations': "inchikey not found",
                         'max_score': 0.0,
                         'max_sensitivity_score': 0.0,
                         'max_specificity_score': 0.0,
@@ -312,7 +317,7 @@ def run_flashmrm_calculation():
                         'MSMS2': 0.0,
                         'CE_QQQ1': 0.0,
                         'CE_QQQ2': 0.0,
-                        'best5_combinations': "processing failed",
+                        'best_combinations': "processing failed",
                         'max_score': 0.0,
                         'max_sensitivity_score': 0.0,
                         'max_specificity_score': 0.0,
@@ -332,7 +337,7 @@ def run_flashmrm_calculation():
                     'MSMS2': 0.0,
                     'CE_QQQ1': 0.0,
                     'CE_QQQ2': 0.0,
-                    'best5_combinations': f"error: {str(e)[:50]}...", 
+                    'best_combinations': f"error: {str(e)[:50]}...", 
                     'max_score': 0.0,
                     'max_sensitivity_score': 0.0,
                     'max_specificity_score': 0.0,
@@ -379,7 +384,7 @@ def run_flashmrm_calculation():
                 'MSMS2': 0.0,
                 'CE_QQQ1': 0.0,
                 'CE_QQQ2': 0.0,
-                'best5_combinations': error_msg[:50] + "...",
+                'best_combinations': error_msg[:50] + "...",
                 'max_score': 0.0,
                 'max_sensitivity_score': 0.0,
                 'max_specificity_score': 0.0,
@@ -389,7 +394,8 @@ def run_flashmrm_calculation():
 # 主标题和Help按钮
 col_title, col_help = st.columns([3, 1])
 with col_title:
-   st.image("786a50646609813e89cc2017082525a3.png", width=200)
+   # st.image("786a50646609813e89cc2017082525a3.png", width=200)  # Image file not found, commented out
+   st.title("FlashMRM")
 with col_help:
    with col_help:
     if st.button("Help", width='stretch', key="help_btn"):  
@@ -409,9 +415,10 @@ if st.session_state.get('show_help', False):
    - *RT offset*: retention time offset in minutes (default 0.0)  
    - *Specificity weight*: (0–1), default 0.2  
    - *Select INTF data*: choose interference database  
-     - **Default** = NIST-format DB  
-     - **QE** = QE-format DB  
-     - **Upload custom** = upload a CSV interference data file to be used instead of built-in databases  
+     - **EXPOS** = EXPOS-format DB  
+     - **EXPER** = EXPER-format DB  
+     - **Upload custom** = upload a CSV interference data file to be used instead of built-in databases
+   - *Top combinations*: number of top combinations to return (default 10)  
 4. Click **Calculate** to start; a progress bar will show completion status.  
 5. When finished, view the results table and download a CSV.
 
@@ -523,12 +530,9 @@ with st.expander("Select Input mode"):
     # 上传按钮
     col_u1, col_u2, col_u3 = st.columns([1, 1, 1])
     with col_u2:
-        up_bg = "#CCDAFF"
-        upload_clicked = st_yled.button(
+        upload_clicked = st.button(
             "Upload",
-            width="stretch",
             key="upload_button",
-            background_color=up_bg,
             disabled=st.session_state.calculation_in_progress
         )
     if upload_clicked:
@@ -581,17 +585,15 @@ with st.expander("Parameter Setting"):
         col1, col2 = st.columns([2, 2])
         with col1:
             se_bg = "#D9E4FF"
-            intf_data = st_yled.selectbox(
+            intf_data = st.selectbox(
                 "Select INTF data:",
-                ["Default", "QE"],
+                ["EXPOS", "EXPER"],
                 index=0,
                 key="intf_data",
-                help="Default: Using NIST Format Interference Database；QE: Using QE format to interference with the database",
-                background_color=se_bg,
+                help="EXPOS: Using EXPOS Format Interference Database；EXPER: Using EXPER format to interference with the database",
             )
         with col2:
-            mz_bg = "#D9E4FF"
-            mz_tolerance = st_yled.number_input(
+            mz_tolerance = st.number_input(
                 "*m/z* tolerance:",
                 min_value=0.0,
                 max_value=10.0,
@@ -599,15 +601,12 @@ with st.expander("Parameter Setting"):
                 step=0.1,
                 help="Mass-to-charge ratio matching tolerance, default 0.7",
                 key="mz_tolerance",
-                background_color=mz_bg,
-                border_color="#E8EDF3",
             )
 
     # 第二行参数：RT容差 + RT偏移
         col4, col5 = st.columns([1, 1])
         with col4:
-            rt_bg = "#D9E4FF"   
-            rt_tolerance = st_yled.number_input(
+            rt_tolerance = st.number_input(
                 "RT tolerance:",
                 min_value=0.0,
                 max_value=10.0,
@@ -615,11 +614,9 @@ with st.expander("Parameter Setting"):
                 step=0.1,
                 help="Retention time matching tolerance, default 2.0 minutes",
                 key="rt_tolerance",
-                background_color=rt_bg,
             )
         with col5:
-            ro_bg = "#D9E4FF"   
-            rt_offset = st_yled.number_input(
+            rt_offset = st.number_input(
                 "RT offset:",
                 min_value=-10.0,
                 max_value=10.0,
@@ -627,14 +624,12 @@ with st.expander("Parameter Setting"):
                 step=0.5,
                 help="Retention time offset, default 0.0 minutes",
                 key="rt_offset",
-                background_color=ro_bg,
             )
 
-    # 第三行参数：特异性权重 + 
+    # 第三行参数：特异性权重 + 灵敏度权重
         col6, col7 = st.columns([1, 1])
         with col6:
-            spew_bg = "#D9E4FF"   
-            specificity_weight = st_yled.number_input(
+            specificity_weight = st.number_input(
                 "Specificity weight:",
                 min_value=0.0,
                 max_value=1.0,
@@ -644,11 +639,9 @@ with st.expander("Parameter Setting"):
                 key="specificity_weight",
                 on_change=sync_weights,
                 args=("specificity",),
-                background_color=spew_bg,
             )
         with col7:
-            senw_bg = "#D9E4FF"   
-            st_yled.number_input(
+            st.number_input(
                 "Sensitivity weight:",
                 min_value=0.0,
                 max_value=1.0,
@@ -658,7 +651,19 @@ with st.expander("Parameter Setting"):
                 help="Automatically calculated as 1 - Specificity weight",
                 on_change=sync_weights,
                 args=("sensitivity",),
-                background_color=senw_bg,
+            )
+
+    # 第四行参数：Top combinations
+        col8 = st.columns([1])[0]
+        with col8:
+            top_combinations = st.number_input(
+                "Top combinations:",
+                min_value=1,
+                max_value=50,
+                value=st.session_state.get("top_combinations", 10),
+                step=1,
+                help="Number of top combinations to return (default 10)",
+                key="top_combinations",
             )
 
 # 计算区域：按钮 + 进度条
@@ -760,7 +765,7 @@ if st.session_state.calculation_complete:
         index=0
     )
     sel_row = result_df[result_df['_display_key'] == selected_key].iloc[0]
-    top5_df = _normalize_top5_rows(sel_row.get('best5_combinations'))
+    top5_df = _normalize_top5_rows(sel_row.get('best_combinations'))
 
     # ⭐ 展示用：格式化副本（仅显示 1 位小数）
     display_top5_df = top5_df.copy()
