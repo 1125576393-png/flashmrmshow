@@ -211,6 +211,7 @@ def run_flashmrm_calculation():
         config.RT_TOLERANCE = st.session_state.get("rt_tolerance", 2.0)
         config.RT_OFFSET = st.session_state.get("rt_offset", 0.0)
         config.SPECIFICITY_WEIGHT = st.session_state.get("specificity_weight", 0.2)
+        config.SENSITIVITY_WEIGHT = st.session_state.get("sensitivity_weight", 0.8)
         config.TOP_COMBINATIONS = st.session_state.get("top_combinations", 10)
         config.OUTPUT_PATH = "flashmrm_output.csv"
         
