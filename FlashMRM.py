@@ -45,8 +45,8 @@ class Config:
     SAVE_INTERVAL: int = 100  # Save intermediate results after processing this many compounds
     
     # Scoring parameters
-    SENSITIVITY_WEIGHT: float = 0.0
-    SPECIFICITY_WEIGHT: float = 1.0
+    SENSITIVITY_WEIGHT: float = 0.5
+    SPECIFICITY_WEIGHT: float = 0.5
     TOP_COMBINATIONS: int = 10  # Number of top combinations to return (applies to both EXPER and EXPOS methods)
     
     # QQQ conversion parameters
@@ -58,7 +58,10 @@ class Config:
     
     # Input mode selection
     SINGLE_COMPOUND_MODE: bool = False  # True for single compound input mode
-    TARGET_INCHIKEY: str = ""  # Target InChIKey for single compound mode
+    TARGET_INCHIKEY: str = ""
+    
+    # In-memory custom database (for uploaded files)
+    CUSTOM_DB_DF: Optional[pd.DataFrame] = None  # DataFrame for in-memory custom database  # Target InChIKey for single compound mode
 
 class DataLoader:
     """Data loader with optimized memory usage"""
@@ -340,21 +343,45 @@ class LazyFileLoader:
             logger.warning(f"No data found for InChIKey {inchikey} in indexed files")
             return pd.DataFrame()
     
-    def query_interference_by_range(self, folder_path: str, precursormz: float, rt: float,
+    def query_interference_by_range(self, folder_or_file_path: str, precursormz: float, rt: float,
                                    mz_tolerance: float, rt_tolerance: float, 
                                    use_avg_mz: bool = False, desc: str = "") -> pd.DataFrame:
-        """Query interference data by m/z and RT range - loads files in chunks"""
-        csv_files = sorted([f for f in os.listdir(folder_path) if f.endswith('.csv')])
+        """Query interference data by m/z and RT range - loads files in chunks
+        Supports both folder path (multiple CSV files) and single file path
+        """
+        # Check if it's a file or folder
+        if os.path.isfile(folder_or_file_path):
+            # Single file mode
+            csv_files = [os.path.basename(folder_or_file_path)]
+            folder_path = os.path.dirname(folder_or_file_path)
+        elif os.path.isdir(folder_or_file_path):
+            # Folder mode
+            folder_path = folder_or_file_path
+            csv_files = sorted([f for f in os.listdir(folder_path) if f.endswith('.csv')])
+        else:
+            logger.error(f"Path does not exist: {folder_or_file_path}")
+            return pd.DataFrame()
+        
+        if not csv_files:
+            logger.warning(f"No CSV files found in {folder_or_file_path}")
+            return pd.DataFrame()
+        
         all_data = []
         
         # Process files in smaller batches to control memory
-        batch_size = 375  # Process 5 files at a time
+        batch_size = 375  # Process files in batches
         for i in range(0, len(csv_files), batch_size):
             batch_files = csv_files[i:i+batch_size]
             batch_data = []
             
             for csv_file in batch_files:
-                file_path = os.path.join(folder_path, csv_file)
+                if os.path.isfile(folder_or_file_path):
+                    # Single file mode - use the original path
+                    file_path = folder_or_file_path
+                else:
+                    # Folder mode - join folder and file
+                    file_path = os.path.join(folder_path, csv_file)
+                
                 try:
                     # Read file in chunks and filter
                     for chunk in pd.read_csv(file_path, chunksize=50000, encoding='utf-8', low_memory=False):
@@ -379,6 +406,10 @@ class LazyFileLoader:
                 except Exception as e:
                     logger.warning(f"Error reading {csv_file}: {e}")
                     continue
+                
+                # If single file mode, break after first file
+                if os.path.isfile(folder_or_file_path):
+                    break
             
             if batch_data:
                 all_data.append(pd.concat(batch_data, ignore_index=True))
@@ -1198,13 +1229,30 @@ class MRMOptimizer:
         }
     
     def prepare_interference_data_exper(self, precursormz: float, rt: float) -> Dict[str, pd.DataFrame]:
-        """Prepare interference data (EXPER method) - query on-demand"""
-        # Query interference data on-demand
-        rt_filtered_rows = self.lazy_loader.query_interference_by_range(
-            self.config.INTF_TQDB_PATH, precursormz, rt,
-            self.config.MZ_TOLERANCE, self.config.RT_TOLERANCE,
-            use_avg_mz=True, desc="Interference Database"
-        )
+        """Prepare interference data (EXPER method) - query on-demand
+        Supports both file-based and in-memory DataFrame
+        """
+        # Check if using in-memory custom database
+        if self.config.CUSTOM_DB_DF is not None:
+            # Use in-memory DataFrame directly
+            df = self.config.CUSTOM_DB_DF
+            # Filter by m/z and RT
+            if 'Average Mz' in df.columns and 'Average Rt(min)' in df.columns:
+                mask = (
+                    (abs(df['Average Mz'] - precursormz) <= self.config.MZ_TOLERANCE) &
+                    (abs(df['Average Rt(min)'] - rt) <= self.config.RT_TOLERANCE)
+                )
+                rt_filtered_rows = df[mask].copy()
+            else:
+                logger.warning("Custom database DataFrame missing required columns (Average Mz, Average Rt(min))")
+                rt_filtered_rows = pd.DataFrame()
+        else:
+            # Query interference data on-demand from file/folder
+            rt_filtered_rows = self.lazy_loader.query_interference_by_range(
+                self.config.INTF_TQDB_PATH, precursormz, rt,
+                self.config.MZ_TOLERANCE, self.config.RT_TOLERANCE,
+                use_avg_mz=True, desc="Interference Database"
+            )
         
         # Group by CE
         if len(rt_filtered_rows) > 0 and 'CE' in rt_filtered_rows.columns:
@@ -1379,8 +1427,12 @@ class MRMOptimizer:
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(description='MRM Transition Optimization Tool')
-    parser.add_argument('--intf-db', choices=['expos', 'exper', 'exposome_explorer', 'experimental', 'nist', 'qe'], default='expos',
-                       help='Select interference database: expos (or exposome_explorer/nist) or exper (or experimental/qe) (default: expos)')
+    parser.add_argument('--intf-db', choices=['expos', 'exper', 'custom', 'exposome_explorer', 'experimental', 'nist', 'qe'], default='expos',
+                       help='Select interference database: expos (or exposome_explorer/nist), exper (or experimental/qe), or custom (default: expos)')
+    parser.add_argument('--custom-db-path', type=str, default='',
+                       help='Custom database file or folder path (required when --intf-db is custom). If file, must be EXPER format CSV. If folder, specify format with --custom-db-method')
+    parser.add_argument('--custom-db-method', choices=['expos', 'exper'], default='exper',
+                       help='Database format for custom database folder: expos or exper (default: exper, only used when --custom-db-path is a folder)')
     parser.add_argument('--max-compounds', type=int, default=375,
                        help='Maximum number of compounds to process (default: 375)')
     parser.add_argument('--output', type=str, default='optimization_results.csv',
@@ -1397,19 +1449,51 @@ def main():
         config = Config()
         # Support both old and new parameter names for backward compatibility
         is_expos = args.intf_db in ['expos', 'exposome_explorer', 'nist']
-        config.USE_EXPOS_METHOD = is_expos
+        is_custom = args.intf_db == 'custom'
+        
         config.MAX_COMPOUNDS = args.max_compounds
         config.OUTPUT_PATH = args.output
         config.SINGLE_COMPOUND_MODE = args.single_compound
         config.TARGET_INCHIKEY = args.inchikey
         
-        # Set INTF_TQDB_PATH based on selection
-        if is_expos:
+        # Set INTF_TQDB_PATH and USE_EXPOS_METHOD based on selection
+        if is_custom:
+            # Custom database mode - supports both single file and folder
+            if not args.custom_db_path:
+                logger.error("--custom-db-path is required when --intf-db is custom")
+                return
+            if not os.path.exists(args.custom_db_path):
+                logger.error(f"Custom database path not found: {args.custom_db_path}")
+                return
+            
+            config.INTF_TQDB_PATH = args.custom_db_path
+            
+            # Custom mode: if it's a file, use EXPER method; if it's a folder, use specified method
+            if os.path.isfile(args.custom_db_path):
+                # Single file mode - always use EXPER method (EXPER format)
+                config.USE_EXPOS_METHOD = False
+                logger.info(f"Using custom interference database file: {config.INTF_TQDB_PATH}")
+                logger.info(f"Custom database format: EXPER (single file mode)")
+            elif os.path.isdir(args.custom_db_path):
+                # Folder mode - use specified method
+                config.USE_EXPOS_METHOD = (args.custom_db_method == 'expos')
+                csv_files = [f for f in os.listdir(args.custom_db_path) if f.endswith('.csv')]
+                if not csv_files:
+                    logger.warning(f"No CSV files found in custom database path: {args.custom_db_path}")
+                logger.info(f"Using custom interference database folder: {config.INTF_TQDB_PATH}")
+                logger.info(f"Custom database format: {args.custom_db_method.upper()}")
+            else:
+                logger.error(f"Custom database path is neither a file nor a directory: {args.custom_db_path}")
+                return
+        elif is_expos:
             config.INTF_TQDB_PATH = 'INTF_TQDB_EXPOS'
+            config.USE_EXPOS_METHOD = True
+            logger.info(f"Using interference database: {config.INTF_TQDB_PATH}")
         else:
             config.INTF_TQDB_PATH = 'INTF_TQDB_EXPER'
+            config.USE_EXPOS_METHOD = False
+            logger.info(f"Using interference database: {config.INTF_TQDB_PATH}")
         
-        logger.info(f"Using interference database: {config.INTF_TQDB_PATH}")
         logger.info(f"Using method: {'EXPOS' if config.USE_EXPOS_METHOD else 'EXPER'}")
         
         if config.SINGLE_COMPOUND_MODE:

@@ -134,6 +134,10 @@ if 'result_df' not in st.session_state:
     st.session_state.result_df = pd.DataFrame()
 if 'top_combinations' not in st.session_state:
     st.session_state.top_combinations = 10
+if 'custom_db_df' not in st.session_state:
+    st.session_state.custom_db_df = None
+if 'custom_db_filename' not in st.session_state:
+    st.session_state.custom_db_filename = None
 
 def process_uploaded_data():
     """处理上传的数据"""
@@ -217,11 +221,33 @@ def run_flashmrm_calculation():
         
         # 设置干扰数据库
         intf_data_selection = st.session_state.get("intf_data", "EXPOS")
+        
         if intf_data_selection == "EXPOS":
             config.INTF_TQDB_PATH = 'INTF_TQDB_EXPOS'
             config.USE_EXPOS_METHOD = True
-        else:
+        elif intf_data_selection == "EXPER":
             config.INTF_TQDB_PATH = 'INTF_TQDB_EXPER'
+            config.USE_EXPOS_METHOD = False
+        elif intf_data_selection == "Custom":
+            # 使用自定义上传的文件（内存中）
+            custom_db_df = st.session_state.get("custom_db_df", None)
+            
+            if custom_db_df is None:
+                st.error("Please upload a custom database file when 'Custom' option is selected.")
+                st.session_state.calculation_in_progress = False
+                st.session_state.calculation_complete = True
+                return
+            
+            # 验证 DataFrame 格式（检查是否包含 EXPER 格式所需的列）
+            required_columns = ['Alignment ID', 'Average Mz', 'Average Rt(min)', 'CE', 'MS/MS spectrum']
+            missing_columns = [col for col in required_columns if col not in custom_db_df.columns]
+            if missing_columns:
+                st.warning(f"Custom database file may be missing some required columns: {missing_columns}\nRequired columns: {', '.join(required_columns)}")
+            
+            # 设置内存中的 DataFrame
+            config.CUSTOM_DB_DF = custom_db_df
+            config.INTF_TQDB_PATH = "__MEMORY__"  # Special marker for in-memory mode
+            # Custom 文件始终使用 EXPER 方法（因为格式是 EXPER 格式）
             config.USE_EXPOS_METHOD = False
         
         # 2. 获取目标InChIKey列表
@@ -354,6 +380,16 @@ def run_flashmrm_calculation():
         st.session_state.calculation_complete = True
         st.session_state.calculation_in_progress = False
         st.session_state.upload_status = ("success", f"Calculation complete! A total of {total_compounds} compounds have been processed.")
+        
+        # Clean up uploaded custom database file after calculation (optional - can be kept for session)
+        # Uncomment the following lines if you want to clean up immediately after calculation:
+        # custom_db_path = st.session_state.get("custom_db_path", "")
+        # if custom_db_path and os.path.exists(custom_db_path):
+        #     try:
+        #         os.remove(custom_db_path)
+        #         st.session_state.custom_db_path = ""
+        #     except Exception as e:
+        #         print(f"Warning: Could not clean up uploaded file: {e}")
     
     except Exception as e:
         # 全局异常处理
@@ -418,7 +454,7 @@ if st.session_state.get('show_help', False):
    - *Select INTF data*: choose interference database  
      - **EXPOS** = EXPOS-format DB  
      - **EXPER** = EXPER-format DB  
-     - **Upload custom** = upload a CSV interference data file to be used instead of built-in databases
+     - **Custom** = upload a CSV file with EXPER format (must contain: Alignment ID, Average Mz, Average Rt(min), CE, MS/MS spectrum)
    - *Top combinations*: number of top combinations to return (default 10)  
 4. Click **Calculate** to start; a progress bar will show completion status.  
 5. When finished, view the results table and download a CSV.
@@ -588,11 +624,54 @@ with st.expander("Parameter Setting"):
             se_bg = "#D9E4FF"
             intf_data = st.selectbox(
                 "Select INTF data:",
-                ["EXPOS", "EXPER"],
+                ["EXPOS", "EXPER", "Custom"],
                 index=0,
                 key="intf_data",
-                help="EXPOS: Using EXPOS Format Interference Database；EXPER: Using EXPER format to interference with the database",
+                help="EXPOS: Using EXPOS Format Interference Database；EXPER: Using EXPER format to interference with the database；Custom: Use custom database path",
             )
+            
+            # 如果选择 Custom，显示文件上传
+            if intf_data == "Custom":
+                uploaded_custom_db = st.file_uploader(
+                    "Upload custom database file:",
+                    type=['csv'],
+                    key="custom_db_file",
+                    help="Upload a CSV file with EXPER format (must contain columns: Alignment ID, Average Mz, Average Rt(min), CE, MS/MS spectrum)"
+                )
+                
+                if uploaded_custom_db is not None:
+                    # Read file directly into memory (no disk save)
+                    try:
+                        # Read CSV file into DataFrame
+                        custom_db_df = pd.read_csv(uploaded_custom_db, encoding='utf-8', low_memory=False)
+                        
+                        # Validate required columns
+                        required_columns = ['Alignment ID', 'Average Mz', 'Average Rt(min)', 'CE', 'MS/MS spectrum']
+                        missing_columns = [col for col in required_columns if col not in custom_db_df.columns]
+                        
+                        if missing_columns:
+                            st.warning(f"File may be missing some required columns: {missing_columns}\nRequired columns: {', '.join(required_columns)}")
+                        else:
+                            st.success(f"File uploaded: {uploaded_custom_db.name} (loaded into memory)")
+                        
+                        # Store DataFrame in session state
+                        st.session_state.custom_db_df = custom_db_df
+                        st.session_state.custom_db_filename = uploaded_custom_db.name
+                        
+                        # Show file info
+                        st.info(f"File preview (first 5 rows, {len(custom_db_df)} total rows):\nColumns: {', '.join(custom_db_df.columns.tolist())}")
+                        st.dataframe(custom_db_df.head(5), use_container_width=True)
+                        
+                    except Exception as e:
+                        st.error(f"Error reading file: {str(e)}")
+                        st.session_state.custom_db_df = None
+                        st.session_state.custom_db_filename = None
+                else:
+                    # Clear custom_db_df if no file uploaded
+                    if 'custom_db_df' in st.session_state:
+                        st.session_state.custom_db_df = None
+                    if 'custom_db_filename' in st.session_state:
+                        st.session_state.custom_db_filename = None
         with col2:
             mz_tolerance = st.number_input(
                 "*m/z* tolerance:",
