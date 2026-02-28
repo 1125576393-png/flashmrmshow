@@ -51,7 +51,7 @@ class Config:
 
     #specificity calculation mode
     SPECIFICITY_CALC_MODE: str = "Standard mode"   # "Standard mode" or "Stabilized mode"
-    SPECIFICITY_EPS: float = 1.2*e-4          # epsilon used in stabilized mode (you can tune)
+    SPECIFICITY_EPS: float = 1.2e-4          # epsilon used in stabilized mode (you can tune)
     
     # QQQ conversion parameters
     CE_SLOPE: float = 0.5788
@@ -677,7 +677,7 @@ class IonPairOptimizerEXPER:
         max_interference = candidate_df['interference_level_sum'].max()
 
         mode = getattr(self.config, "SPECIFICITY_CALC_MODE", "Standard mode")
-        eps = float(getattr(self.config, "SPECIFICITY_EPS", 1.2*e-4))
+        eps = float(getattr(self.config, "SPECIFICITY_EPS", 1.2e-4))
         
         if max_intensity > 0 and max_interference > 0:
             # Calculate scoring metrics
@@ -849,7 +849,7 @@ class IonPairOptimizerEXPOS:
 
         #cal mode
         mode = getattr(self.config, "SPECIFICITY_CALC_MODE", "Standard mode")
-        eps = float(getattr(self.config, "SPECIFICITY_EPS", 1e-6))
+        eps = float(getattr(self.config, "SPECIFICITY_EPS", 1.2e-6))
 
         # Specificity score (mode switch)
         if max_hit_num > 0:
@@ -1560,3 +1560,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
