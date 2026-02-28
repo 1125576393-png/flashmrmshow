@@ -748,7 +748,7 @@ with st.expander("Parameter Setting"):
             )
         with col9:
             spec_cal_mode = st.selectbox(
-                "Specificity calculation mode:",
+                "Spec cal mode:",
                 ["Standard mode",  "Stabilized mode"],
                 index=0,
                 key="spec_cal_mode",
