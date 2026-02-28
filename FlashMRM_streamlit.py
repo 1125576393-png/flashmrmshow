@@ -216,7 +216,8 @@ def run_flashmrm_calculation():
         config.RT_OFFSET = st.session_state.get("rt_offset", 0.0)
         config.SPECIFICITY_WEIGHT = st.session_state.get("specificity_weight", 0.2)
         config.SENSITIVITY_WEIGHT = st.session_state.get("sensitivity_weight", 0.8)
-        config.TOP_COMBINATIONS = st.session_state.get("top_combinations", 10)
+        config.TOP_PRODUCT_IONS = st.session_state.get("top product ions", 10)
+        config.SPECIFICITY_CALC_MODE = st.session_state.get("spec_cal_mode", "Standard mode")
         config.OUTPUT_PATH = "flashmrm_output.csv"
         
         # 设置干扰数据库
@@ -733,25 +734,25 @@ with st.expander("Parameter Setting"):
                 args=("sensitivity",),
             )
 
-    # 第四行参数：Top combinations + 两种计算方式
+    # 第四行参数：Top combinations + Specificity calculation mode
         col8, col9 = st.columns([1, 1])
         with col8:
-            top case fragment = st.number_input(
-                "Top combinations:",
+            top_product_ions = st.number_input(
+                "top product ions:",
                 min_value=1,
                 max_value=50,
-                value=st.session_state.get("top_combinations", 10),
+                value=st.session_state.get("top_product_ions", 10),
                 step=1,
-                help="Number of top combinations to return (default 10)",
-                key="top_combinations",
+                help="Number of top case fragment to return (default 10)",
+                key="top_product_ions",
             )
         with col9:
-            intf_data = st.selectbox(
-                "Specificity calculation:",
+            spec_cal_mode = st.selectbox(
+                "Specificity calculation mode:",
                 ["Standard mode",  "Stabilized mode"],
                 index=0,
-                key="Specificity calculatio",
-                help="EXPOS: Using EXPOS Format Interference Database；Custom: Use custom database path",
+                key="spec_cal_mode",
+                help="Standard: original formula；Stabilized: add ε to reduce fluctuation under low interference.",
             )
 
 # 计算区域：按钮 + 进度条
