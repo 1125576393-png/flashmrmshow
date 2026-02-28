@@ -733,10 +733,10 @@ with st.expander("Parameter Setting"):
                 args=("sensitivity",),
             )
 
-    # 第四行参数：Top combinations
-        col8 = st.columns([1])[0]
+    # 第四行参数：Top combinations + 两种计算方式
+        col8, col9 = st.columns([1, 1])
         with col8:
-            top_combinations = st.number_input(
+            top case fragment = st.number_input(
                 "Top combinations:",
                 min_value=1,
                 max_value=50,
@@ -744,6 +744,14 @@ with st.expander("Parameter Setting"):
                 step=1,
                 help="Number of top combinations to return (default 10)",
                 key="top_combinations",
+            )
+        with col9:
+            intf_data = st.selectbox(
+                "Specificity calculation:",
+                ["Standard mode",  "Stabilized mode"],
+                index=0,
+                key="Specificity calculatio",
+                help="EXPOS: Using EXPOS Format Interference Database；Custom: Use custom database path",
             )
 
 # 计算区域：按钮 + 进度条
@@ -876,18 +884,4 @@ if st.session_state.calculation_complete:
     success_count = success_conditions.sum()  # 用sum()统计True的数量，避免len()的歧义
         
     st.success(f"Calculation complete ✅ | Successfully processed: {success_count}| Overall processing: {len(result_df)}")
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
 
