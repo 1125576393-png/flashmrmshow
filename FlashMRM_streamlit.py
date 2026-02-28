@@ -216,7 +216,7 @@ def run_flashmrm_calculation():
         config.RT_OFFSET = st.session_state.get("rt_offset", 0.0)
         config.SPECIFICITY_WEIGHT = st.session_state.get("specificity_weight", 0.2)
         config.SENSITIVITY_WEIGHT = st.session_state.get("sensitivity_weight", 0.8)
-        config.TOP_PRODUCT_IONS = st.session_state.get("top product ions", 10)
+        config.TOP_PRODUCT_IONS = st.session_state.get("top_product_ions", 10)
         config.SPECIFICITY_CALC_MODE = st.session_state.get("spec_cal_mode", "Standard mode")
         config.OUTPUT_PATH = "flashmrm_output.csv"
         
