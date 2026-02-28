@@ -48,6 +48,10 @@ class Config:
     SENSITIVITY_WEIGHT: float = 0.5
     SPECIFICITY_WEIGHT: float = 0.5
     TOP_COMBINATIONS: int = 10  # Number of top combinations to return (applies to both EXPER and EXPOS methods)
+
+    #specificity calculation mode
+    SPECIFICITY_CALC_MODE: str = "Standard mode"   # "Standard mode" or "Stabilized mode"
+    SPECIFICITY_EPS: float = 1.2*e-4          # epsilon used in stabilized mode (you can tune)
     
     # QQQ conversion parameters
     CE_SLOPE: float = 0.5788
@@ -671,13 +675,32 @@ class IonPairOptimizerEXPER:
         # Calculate scores
         max_intensity = candidate_df['intensity_sum'].max()
         max_interference = candidate_df['interference_level_sum'].max()
+
+        mode = getattr(self.config, "SPECIFICITY_CALC_MODE", "Standard mode")
+        eps = float(getattr(self.config, "SPECIFICITY_EPS", 1.2*e-4))
         
         if max_intensity > 0 and max_interference > 0:
             # Calculate scoring metrics
             candidate_df['sensitivity_score'] = candidate_df['intensity_sum'] / max_intensity
-            candidate_df['specificity_score'] = -(1 + candidate_df['interference_level_sum']) / (1 + max_interference)
             candidate_df['intensity_score'] = candidate_df['intensity_sum'] / max_intensity
-            candidate_df['interference_score'] = -(1 + candidate_df['interference_level_sum']) / (1 + max_interference)
+            
+            # Specificity: mode switch
+            if mode == "Standard mode":
+                # ✅ Keep original formula
+                candidate_df['specificity_score'] = -(1 + candidate_df['interference_level_sum']) / (1 + max_interference)
+                candidate_df['interference_score'] = -(1 + candidate_df['interference_level_sum']) / (1 + max_interference)
+
+            elif mode == "Stabilized mode":
+                # ✅ Stabilized mode
+                # Example stabilized denominator:
+                denom = (1 + max_interference + eps)
+                candidate_df['specificity_score'] = -(1 + candidate_df['interference_level_sum'] + eps) / denom
+                candidate_df['interference_score'] = -(1 + candidate_df['interference_level_sum'] + eps) / denom
+
+            else:
+                # Fallback to Standard if unknown mode
+                candidate_df['specificity_score'] = -(1 + candidate_df['interference_level_sum']) / (1 + max_interference)
+                candidate_df['interference_score'] = -(1 + candidate_df['interference_level_sum']) / (1 + max_interference)
             
             # Combined score
             candidate_df['score'] = (
@@ -817,25 +840,42 @@ class IonPairOptimizerEXPOS:
         # Calculate Sensitivity Score and Specificity Score
         max_intensity_sum = candidate_df['intensity_sum'].max()
         max_hit_num = candidate_df['hit_num'].max()
-        
-        # Sensitivity Score = 当前intensity_sum / 所有组合中最大的intensity_sum
+
+         # Sensitivity Score = 当前intensity_sum / 所有组合中最大的intensity_sum
         if max_intensity_sum > 0:
             candidate_df['sensitivity_score'] = candidate_df['intensity_sum'] / max_intensity_sum
         else:
             candidate_df['sensitivity_score'] = 0
-        
-        # Specificity Score = 1 - hit_num / 所有组合中最大的hit_num, 如果最大的hit_num为0，结果为1
+
+        #cal mode
+        mode = getattr(self.config, "SPECIFICITY_CALC_MODE", "Standard mode")
+        eps = float(getattr(self.config, "SPECIFICITY_EPS", 1e-6))
+
+        # Specificity score (mode switch)
         if max_hit_num > 0:
-            candidate_df['specificity_score'] = 1 - candidate_df['hit_num'] / max_hit_num
+            if mode == "Standard mode":
+            #Keep original formula
+                candidate_df['specificity_score'] = 1 - candidate_df['hit_num'] / max_hit_num
+
+            elif mode == "Stabilized mode":
+                #Stabilized mode
+                denom = (max_hit_num + eps)
+
+                #Replace this line with your stabilized specificity formula
+                candidate_df['specificity_score'] = 1 - ( candidate_df['hit_num'] + eps ) / denom
+
+            else:
+                # Fallback to Standard
+                candidate_df['specificity_score'] = 1 - candidate_df['hit_num'] / max_hit_num
         else:
             candidate_df['specificity_score'] = 1
-        
-        # Score = weighted combination of sensitivity_score and specificity_score
+
+        # Score = weighted combination of sensitivity_score and specificity_score (unchanged)
         candidate_df['score'] = (
             candidate_df['sensitivity_score'] * self.config.SENSITIVITY_WEIGHT +
             candidate_df['specificity_score'] * self.config.SPECIFICITY_WEIGHT
         )
-        
+
         return candidate_df
     
     def select_best_pairs(self, candidate_df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
@@ -905,6 +945,12 @@ class MRMOptimizer:
     
     def __init__(self, config: Config = None):
         self.config = config or Config()
+        
+        # NEW: 加一个映射
+        # If frontend passes TOP_PRODUCT_IONS, map it to existing TOP_COMBINATIONS
+        if hasattr(self.config, "TOP_PRODUCT_IONS") and getattr(self.config, "TOP_PRODUCT_IONS") is not None:
+            self.config.TOP_COMBINATIONS = int(getattr(self.config, "TOP_PRODUCT_IONS"))
+            
         self.data_loader = DataLoader(self.config)
         
         # Initialize lazy file loader for memory-efficient queries
