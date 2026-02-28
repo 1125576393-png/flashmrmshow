@@ -433,7 +433,7 @@ def run_flashmrm_calculation():
 col_title, col_help = st.columns([3, 1])
 with col_title:
    # st.image("786a50646609813e89cc2017082525a3.png", width=200)  # Image file not found, commented out
-   st.title("FlashMRM")
+   st.image("786a50646609813e89cc2017082525a3.png", width=200)
 with col_help:
    with col_help:
     if st.button("Help", width='stretch', key="help_btn"):  
