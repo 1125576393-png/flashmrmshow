@@ -250,7 +250,12 @@ def run_flashmrm_calculation():
             config.INTF_TQDB_PATH = "__MEMORY__"  # Special marker for in-memory mode
             # Custom 文件始终使用 EXPER 方法（因为格式是 EXPER 格式）
             config.USE_EXPOS_METHOD = False
-        
+
+        # NEW: if user uploaded a batch file, pass the parsed DF to backend (no filename dependency)
+        ud = st.session_state.get("uploaded_data")
+        if ud and ud.get("type") == "batch_file":
+            config.CUSTOM_DEMO_DF = ud["data"]   # DataFrame with InChIKey column
+            
         # 2. 获取目标InChIKey列表
         uploaded_data = st.session_state.uploaded_data
         if uploaded_data["type"] == "single_inchikey":
