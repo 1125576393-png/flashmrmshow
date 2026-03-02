@@ -67,6 +67,9 @@ class Config:
     # In-memory custom database (for uploaded files)
     CUSTOM_DB_DF: Optional[pd.DataFrame] = None  # DataFrame for in-memory custom database  # Target InChIKey for single compound mode
 
+    # In-memory demo/batch InChIKey list (from uploaded file)
+    CUSTOM_DEMO_DF: Optional[pd.DataFrame] = None
+
 class DataLoader:
     """Data loader with optimized memory usage"""
     
@@ -74,7 +77,18 @@ class DataLoader:
         self.config = config
         
     def load_demo_data(self) -> pd.DataFrame:
-        """Load demo data"""
+        """Load demo data(file or in-memory uploaded DF)"""
+
+        # NEW: if uploaded batch file has been parsed into a DataFrame, use it directly
+        if self.config.CUSTOM_DEMO_DF is not None:
+            logger.info("Using in-memory uploaded demo data (CUSTOM_DEMO_DF).")
+            df = self.config.CUSTOM_DEMO_DF.copy()
+
+            # Safety check: must contain InChIKey column
+            if "InChIKey" not in df.columns:
+                raise ValueError('Uploaded data must contain an "InChIKey" column.')
+            return df
+        
         logger.info("Reading demo_data.csv...")
         try:
             df = pd.read_csv(self.config.DEMO_DATA_PATH, low_memory=False, encoding='ISO-8859-1')
@@ -1560,4 +1574,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
